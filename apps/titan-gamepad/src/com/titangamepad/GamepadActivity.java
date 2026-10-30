@@ -62,11 +62,16 @@ public class GamepadActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         int current = GamepadAccessibilityService.getModePref(this);
-        // Cycle order: Off -> Mouse -> Controller -> Off.
+        // Bisect order: Off -> Controller -> Mouse -> Off, so
+        // Controller can be reached WITHOUT passing through Mouse
+        // first. If gamepad buttons work this way but not when
+        // cycling through Mouse, the mouse device lingering is
+        // the culprit; if they still fail, the mode system or
+        // blocking is.
         if (current == GamepadAccessibilityService.MODE_OFF) {
-            nextMode = GamepadAccessibilityService.MODE_MOUSE;
-        } else if (current == GamepadAccessibilityService.MODE_MOUSE) {
             nextMode = GamepadAccessibilityService.MODE_GAMEPAD;
+        } else if (current == GamepadAccessibilityService.MODE_GAMEPAD) {
+            nextMode = GamepadAccessibilityService.MODE_MOUSE;
         } else {
             nextMode = GamepadAccessibilityService.MODE_OFF;
         }

@@ -11,7 +11,7 @@ Each app's source is small enough to read in full before you sideload it.
 
 | App | What it does | How it works |
 |---|---|---|
-| [Titan Gamepad](apps/titan-gamepad/) | Turns the Titan 2 Elite's physical keyboard into a virtual gamepad or a virtual mouse that any app supporting controllers sees — emulators, games, and streaming apps. One launcher cycles Off → Mouse → Controller → Off | Accessibility key filtering + UHID virtual devices via Shizuku |
+| [Titan Gamepad](apps/titan-gamepad/) | Turns the Titan 2 Elite's physical keyboard into a virtual gamepad or a virtual mouse that any app supporting controllers sees — emulators, games, and streaming apps. One launcher cycles Off → Controller → Mouse → Off | Accessibility key filtering + UHID virtual devices via Shizuku |
 | [Tablet Mode](apps/tablet-mode/) | Toggles display density between 210 DPI (tablet mode) and 289 DPI (normal) | Shizuku |
 | [Lock](apps/lock/) | Locks the phone the moment you launch it | Device admin (`lockNow`), nothing else |
 | [Color Invert](apps/color-invert/) | Toggles display color inversion | Shizuku, flips `accessibility_display_inversion_enabled` |
@@ -22,15 +22,18 @@ built-in keyboard shortcut settings — assign a key to each app, and
 launching it changes the setting (or locks the phone, for Lock), verifies
 it stuck, and exits. The only exception is a first-run permission prompt.
 Titan Gamepad is the exception to "one thing": its single launcher cycles
-Off → Mouse → Controller → Off, and while a profile is on, non-mapped
-keys are blocked so nothing leaks through as typing (Home, Back, and
-volume always pass through).
+Off → Controller → Mouse → Off. No keys are blocked — mapped keys send
+their gamepad or mouse input and also pass through, unmapped keys send
+blank input and pass through. In mouse mode only, the driver pauses
+automatically while an editable text field has focus, so keys type
+normally there, and resumes when focus leaves the field.
 
 ## Status
 
 - **Lock, Tablet Mode, Color Invert, Grayscale, and Titan Gamepad are all
   confirmed working on a Titan 2 Elite** (confirmed 2026-10-30, including
-  the Gamepad menufix build's mode check and stuck-direction fix).
+  the Gamepad's mouse profile with O/P clicks, short toasts, no-blocking
+  behaviour, and mouse input-field pause).
 
 ## Install
 
@@ -39,8 +42,10 @@ on first launch, and nothing else is needed:
 
 - Titan Gamepad needs Accessibility permission, plus Shizuku permission
   (grant it in the Shizuku app) so it can create the virtual gamepad
-  and mouse devices. Launch its icon to cycle Off → Mouse → Controller
-  → Off.
+  and mouse devices. Launch its icon to cycle Off → Controller → Mouse
+  → Off. After installing a build that changes the Accessibility config
+  (such as the input-field pause), toggle Titan Gamepad off and on once
+  in Accessibility settings so the new config is read.
 - Tablet Mode, Color Invert, and Grayscale need Shizuku permission.
 - Lock needs device admin permission, granted once on first launch.
 
@@ -56,15 +61,19 @@ using `aapt2` / `javac` / `d8` directly.
 ## Trust notes, especially for Titan Gamepad
 
 Titan Gamepad uses an Accessibility service with key filtering. That is the
-whole point of the app — it has to see mapped keys before the foreground app
-does, so it can swallow them and send gamepad input instead — and it is also
-the permission that deserves the most scrutiny. The service:
+whole point of the app — it has to see mapped keys so it can send gamepad
+or mouse input for them — and it is also the permission that deserves the
+most scrutiny. The service:
 
-- does **not** read window content (`canRetrieveWindowContent=false`),
-- consumes a mapped key **only while the virtual gamepad is actually running**
-  (if device creation fails, keys pass through untouched),
-- sends input only to the local UHID device it created — there is no network
-  code anywhere in this repo to send anything anywhere else.
+- does **not** block any key: mapped keys send their input and pass
+  through, unmapped keys send blank input and pass through, and if a
+  device fails to start, keys pass through untouched,
+- can retrieve window content (`canRetrieveWindowContent=true`) for one
+  narrow purpose only: checking whether the currently focused view is an
+  editable text field, so mouse mode can pause while you type. It does
+  not read text content, and it sends nothing anywhere — there is no
+  network code anywhere in this repo to send anything anywhere else,
+- sends input only to the local UHID device it created.
 
 ## Development note
 
