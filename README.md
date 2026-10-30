@@ -63,6 +63,15 @@ the permission that deserves the most scrutiny. The service:
 - sends input only to the local UHID device it created — there is no network
   code anywhere in this repo to send anything anywhere else.
 
+## Development note
+
+This project was developed with AI assistance. The code was written with
+an AI coding assistant working from the owner's on-phone testing and
+feedback — including the bug fixes and layout changes that came out of
+that testing — and the owner tested every app on a Titan 2 Elite before
+release. The source is published in full so anyone can review exactly
+what the apps do.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
