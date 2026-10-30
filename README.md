@@ -11,7 +11,7 @@ Each app's source is small enough to read in full before you sideload it.
 
 | App | What it does | How it works |
 |---|---|---|
-| [Titan Gamepad](apps/titan-gamepad/) | Turns the Titan 2 Elite's physical keyboard into a virtual gamepad, so emulators (e.g. Cannoli's built-in runner) see a real controller instead of a keyboard | Accessibility key filtering + a UHID virtual gamepad via Shizuku |
+| [Titan Gamepad](apps/titan-gamepad/) | Turns the Titan 2 Elite's physical keyboard into a virtual gamepad that any app supporting controllers sees — emulators, games, and streaming apps | Accessibility key filtering + a UHID virtual gamepad via Shizuku |
 | [Tablet Mode](apps/tablet-mode/) | Toggles display density between 210 DPI (tablet mode) and 289 DPI (normal) | Shizuku |
 | [Lock](apps/lock/) | Locks the phone the moment you launch it | Device admin (`lockNow`), nothing else |
 | [Color Invert](apps/color-invert/) | Toggles display color inversion | Shizuku, flips `accessibility_display_inversion_enabled` |

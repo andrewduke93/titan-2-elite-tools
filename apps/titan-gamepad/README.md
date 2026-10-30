@@ -1,9 +1,11 @@
 # Titan Gamepad
 
 A virtual gamepad driver for the Unihertz Titan 2 Elite. It translates the
-phone's own physical QWERTY keyboard into a real UHID gamepad, so emulators
-that take gamepad input (e.g. Cannoli's built-in runner) see a controller —
-not a keyboard. No Titan Boy shell, no RetroArch fork, no root.
+phone's own physical QWERTY keyboard into a real UHID gamepad, so any app
+that supports a controller — emulators, games, streaming apps — sees a
+controller, not a keyboard. Cannoli was just how it was tested and
+verified; nothing in the driver is Cannoli-specific. No Titan Boy shell,
+no RetroArch fork, no root.
 
 ## Why not TitanPad
 
