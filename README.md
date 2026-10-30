@@ -17,9 +17,10 @@ Each app's source is small enough to read in full before you sideload it.
 | [Color Invert](apps/color-invert/) | Toggles display color inversion | Shizuku, flips `accessibility_display_inversion_enabled` |
 | [Grayscale](apps/grayscale/) | Toggles grayscale (monochromacy daltonizer) | Shizuku |
 
-All five are designed to be launched from the Titan's keyboard shortcuts, so
-they have no UI beyond a first-run permission prompt: launch, change the
-setting, verify it stuck, exit.
+None of these apps have a UI. They are toggled from the Titan 2 Elite's
+built-in keyboard shortcut settings — assign a key to each app, and
+launching it changes the setting (or locks the phone, for Lock), verifies
+it stuck, and exits. The only exception is a first-run permission prompt.
 
 ## Status
 
