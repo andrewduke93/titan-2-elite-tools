@@ -6,7 +6,8 @@ to 0 and `accessibility_display_daltonizer_enabled` to 1; on disable it
 clears only the enabled flag, so the next enable returns to grayscale.
 Same silent pattern as Tablet Mode: launch, flip, verify, exit.
 
-**Untested on-phone as of first publish.** If it silently does nothing on
-your ROM, please open an issue with your ROM/firmware version.
+**Confirmed working on a Titan 2 Elite (2026-10-30).** If it silently does
+nothing on a different ROM, please open an issue with your ROM/firmware
+version.
 
 Requires Shizuku running, with Grayscale granted in the Shizuku app.

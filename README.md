@@ -23,13 +23,9 @@ setting, verify it stuck, exit.
 
 ## Status
 
-- **Lock and Tablet Mode are confirmed working on a Titan 2 Elite.**
-- **Titan Gamepad is in on-phone testing** — the core driver works, and the
-  latest build adds a mode check and a stuck-direction unstick (see its README).
-- **Color Invert and Grayscale are built but untested on-phone** as of the
-  first publish. If either silently does nothing on your ROM, that's a real
-  signal: Unihertz may use a different settings key, and an issue with your
-  ROM/firmware version helps narrow it down.
+- **Lock, Tablet Mode, Color Invert, Grayscale, and Titan Gamepad are all
+  confirmed working on a Titan 2 Elite** (confirmed 2026-10-30, including
+  the Gamepad menufix build's mode check and stuck-direction fix).
 
 Deliberately **not** included yet: a Scroll Assistant toggle. Clicking its
 quick-settings tile crashed SystemUI twice on this ROM, and the tap-based
