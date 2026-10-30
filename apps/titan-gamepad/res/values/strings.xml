@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="accessibility_service_description">Titan Gamepad turns the Titan 2 Elite physical keyboard into a virtual gamepad while it is toggled on, and consumes the mapped keys (WASD, K, L, J, I, Q, E, C, N, T, Y, O, P, M, Enter, Space) so games do not also receive them as typed letters. Turn the driver off with the Titan Gamepad launcher icon to type normally again.</string>
+    <string name="accessibility_service_description">Titan Gamepad turns the Titan 2 Elite physical keyboard into a virtual gamepad or a virtual mouse while it is toggled on, and consumes the mapped keys so apps do not also receive them as typed letters. While a mode is on, all other keys are also blocked, except Home, Back, and volume, which always pass through so you can always reach the launcher to turn it off. Controller mode: WASD D-pad, KLJI face, Q/E shoulders, C/N L2/R2, T/Y L3/R3, Enter Select, Space Start, M Menu. Mouse mode: WASD move, I scroll up, J scroll down, K left click, L right click. Launch the Titan Gamepad icon to cycle Off, Mouse, Controller, Off.</string>
 </resources>

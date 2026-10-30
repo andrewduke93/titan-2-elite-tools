@@ -11,20 +11,15 @@ import android.widget.Toast;
 import rikka.shizuku.Shizuku;
 
 /**
- * Toggle, with Shizuku first.
+ * Cycles the driver through Off -> Mouse -> Controller -> Off, one
+ * launch per step, with a toast naming the new mode.
  *
- * Shizuku is the primary path for creating the virtual gamepad, not a
- * fallback, and it is handled the way Tablet Mode does it on this phone
- * (which is why Tablet Mode's prompt works): register the binder and
- * permission-result listeners, stay alive until the result arrives, and
- * only then flip the driver on. Earlier Titan Gamepad builds called
- * requestPermission() with no listener registered and finished
- * immediately, so no prompt ever reliably appeared.
- *
- * Turning OFF needs no Shizuku, so it flips straight away.
- * The accessibility-enabled gate was removed in an earlier fix: it
- * misread the service as disabled on this phone even with the toggle ON
- * and blocked everything after it.
+ * Same Shizuku-first pattern as before (register the binder and
+ * permission-result listeners, stay alive until the result arrives,
+ * only then flip the mode). Turning OFF needs no Shizuku, so it flips
+ * straight away. The mode is also written to prefs here, so if the
+ * accessibility service is not yet connected it still starts in the
+ * right mode when it connects.
  */
 public class GamepadActivity extends Activity {
     private static final int REQ_SHIZUKU = 1001;
@@ -32,6 +27,11 @@ public class GamepadActivity extends Activity {
     private final Handler main = new Handler(Looper.getMainLooper());
     private boolean started = false;
     private boolean finished = false;
+    private int nextMode = GamepadAccessibilityService.MODE_GAMEPAD;
+    // Static, so a new launch can cancel the previous launch's toast
+    // instead of queuing behind it: rapid cycling used to stack
+    // 3.5-second toasts, which is why they felt late and long.
+    private static Toast sToast;
 
     private final Shizuku.OnBinderReceivedListener binderListener =
             new Shizuku.OnBinderReceivedListener() {
@@ -47,11 +47,11 @@ public class GamepadActivity extends Activity {
                 public void onRequestPermissionResult(int requestCode, int grantResult) {
                     if (requestCode != REQ_SHIZUKU) return;
                     if (grantResult == PackageManager.PERMISSION_GRANTED) {
-                        doToggle();
+                        doSetMode();
                     } else {
                         Toast.makeText(GamepadActivity.this,
                                 "Shizuku permission denied — Titan Gamepad "
-                                + "cannot create the virtual gamepad.",
+                                + "cannot create the virtual device.",
                                 Toast.LENGTH_LONG).show();
                         finishSilently();
                     }
@@ -61,10 +61,21 @@ public class GamepadActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        boolean want = !GamepadAccessibilityService.isEnabledPref(this);
-        if (!want) {
-            // Turning off: no Shizuku needed.
-            doToggle();
+        int current = GamepadAccessibilityService.getModePref(this);
+        // Cycle order: Off -> Mouse -> Controller -> Off.
+        if (current == GamepadAccessibilityService.MODE_OFF) {
+            nextMode = GamepadAccessibilityService.MODE_MOUSE;
+        } else if (current == GamepadAccessibilityService.MODE_MOUSE) {
+            nextMode = GamepadAccessibilityService.MODE_GAMEPAD;
+        } else {
+            nextMode = GamepadAccessibilityService.MODE_OFF;
+        }
+        // Announce immediately, at launch, not after the Shizuku
+        // handshake in doSetMode — that handshake was the other
+        // source of lateness.
+        showModeToast();
+        if (nextMode == GamepadAccessibilityService.MODE_OFF) {
+            doSetMode();
             return;
         }
         Shizuku.addBinderReceivedListenerSticky(binderListener);
@@ -84,8 +95,6 @@ public class GamepadActivity extends Activity {
         if (Shizuku.pingBinder()) {
             beginIfNeeded();
         }
-        // Otherwise wait for onBinderReceived(); the timeout above covers
-        // Shizuku never showing up.
     }
 
     @Override
@@ -99,20 +108,48 @@ public class GamepadActivity extends Activity {
         if (started) return;
         started = true;
         if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
-            doToggle();
+            doSetMode();
         } else {
             Shizuku.requestPermission(REQ_SHIZUKU);
         }
     }
 
-    private void doToggle() {
-        boolean want = !GamepadAccessibilityService.isEnabledPref(this);
-        GamepadAccessibilityService.prefs(this).edit().putBoolean("enabled", want).apply();
-        Intent intent = new Intent(GamepadAccessibilityService.ACTION_TOGGLE);
+    private void doSetMode() {
+        GamepadAccessibilityService.prefs(this).edit()
+                .putInt("mode", nextMode)
+                .putBoolean("enabled", nextMode != GamepadAccessibilityService.MODE_OFF).apply();
+        Intent intent = new Intent(GamepadAccessibilityService.ACTION_SET_MODE);
         intent.setPackage(getPackageName());
-        intent.putExtra(GamepadAccessibilityService.EXTRA_ENABLED, want);
+        intent.putExtra(GamepadAccessibilityService.EXTRA_MODE, nextMode);
         sendBroadcast(intent);
         finishSilently();
+    }
+
+    private void showModeToast() {
+        // Short toast, cancelled after ~1s: Android's SHORT is still
+        // 2s, which lingered. Cancelling early is the only way to
+        // make it shorter, and the mode names are short enough to
+        // read in a second.
+        if (sToast != null) sToast.cancel();
+        String modeName;
+        if (nextMode == GamepadAccessibilityService.MODE_MOUSE) {
+            modeName = "Mouse mode.";
+        } else if (nextMode == GamepadAccessibilityService.MODE_GAMEPAD) {
+            modeName = "Controller mode.";
+        } else {
+            modeName = "Off.";
+        }
+        final Toast t = Toast.makeText(this, modeName, Toast.LENGTH_SHORT);
+        sToast = t;
+        t.show();
+        main.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (sToast == t) {
+                    t.cancel();
+                    sToast = null;
+                }
+            }
+        }, 1000);
     }
 
     private void finishSilently() {

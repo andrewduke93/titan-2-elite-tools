@@ -11,7 +11,7 @@ Each app's source is small enough to read in full before you sideload it.
 
 | App | What it does | How it works |
 |---|---|---|
-| [Titan Gamepad](apps/titan-gamepad/) | Turns the Titan 2 Elite's physical keyboard into a virtual gamepad that any app supporting controllers sees — emulators, games, and streaming apps | Accessibility key filtering + a UHID virtual gamepad via Shizuku |
+| [Titan Gamepad](apps/titan-gamepad/) | Turns the Titan 2 Elite's physical keyboard into a virtual gamepad or a virtual mouse that any app supporting controllers sees — emulators, games, and streaming apps. One launcher cycles Off → Mouse → Controller → Off | Accessibility key filtering + UHID virtual devices via Shizuku |
 | [Tablet Mode](apps/tablet-mode/) | Toggles display density between 210 DPI (tablet mode) and 289 DPI (normal) | Shizuku |
 | [Lock](apps/lock/) | Locks the phone the moment you launch it | Device admin (`lockNow`), nothing else |
 | [Color Invert](apps/color-invert/) | Toggles display color inversion | Shizuku, flips `accessibility_display_inversion_enabled` |
@@ -21,6 +21,10 @@ None of these apps have a UI. They are toggled from the Titan 2 Elite's
 built-in keyboard shortcut settings — assign a key to each app, and
 launching it changes the setting (or locks the phone, for Lock), verifies
 it stuck, and exits. The only exception is a first-run permission prompt.
+Titan Gamepad is the exception to "one thing": its single launcher cycles
+Off → Mouse → Controller → Off, and while a profile is on, non-mapped
+keys are blocked so nothing leaks through as typing (Home, Back, and
+volume always pass through).
 
 ## Status
 
@@ -34,7 +38,9 @@ Prebuilt APKs live under **Releases** — sideload one, grant what it asks for
 on first launch, and nothing else is needed:
 
 - Titan Gamepad needs Accessibility permission, plus Shizuku permission
-  (grant it in the Shizuku app) so it can create the virtual gamepad.
+  (grant it in the Shizuku app) so it can create the virtual gamepad
+  and mouse devices. Launch its icon to cycle Off → Mouse → Controller
+  → Off.
 - Tablet Mode, Color Invert, and Grayscale need Shizuku permission.
 - Lock needs device admin permission, granted once on first launch.
 
