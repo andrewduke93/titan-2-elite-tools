@@ -27,10 +27,6 @@ setting, verify it stuck, exit.
   confirmed working on a Titan 2 Elite** (confirmed 2026-10-30, including
   the Gamepad menufix build's mode check and stuck-direction fix).
 
-Deliberately **not** included yet: a Scroll Assistant toggle. Clicking its
-quick-settings tile crashed SystemUI twice on this ROM, and the tap-based
-replacement is untested. It stays out until it is proven safe.
-
 ## Install
 
 Prebuilt APKs live under **Releases** — sideload one, grant what it asks for

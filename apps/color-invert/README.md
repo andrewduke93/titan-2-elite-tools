@@ -8,8 +8,7 @@ silent pattern as Tablet Mode: launch, flip
 nothing on a different ROM, Unihertz may use a different inversion key —
 please open an issue with your ROM/firmware version.
 
-Deliberately does **not** use the quick-settings "inversion" tile: on this
-ROM, clicking quick-settings tiles crashed SystemUI for the Scroll
-Assistant tile, and the tile route is not trusted here.
+Deliberately does **not** use the quick-settings "inversion" tile: the
+tile route is not trusted on this ROM.
 
 Requires Shizuku running, with Invert granted in the Shizuku app.

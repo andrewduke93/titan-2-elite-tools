@@ -15,8 +15,8 @@ import rikka.shizuku.Shizuku;
 /**
  * Single-use, silent toggle for Android color inversion.
  * Uses the standard secure setting "accessibility_display_inversion_enabled"
- * (0 = off, 1 = on) via Shizuku — NOT the QS tile, which crashed SystemUI
- * on this ROM for the Scroll Assistant tile. Reads the current value,
+ * (0 = off, 1 = on) via Shizuku — NOT the QS tile, which is not trusted
+ * on this ROM. Reads the current value,
  * flips it, verifies, retries once if the set didn't stick.
  * No toast, no UI, no network.
  */
