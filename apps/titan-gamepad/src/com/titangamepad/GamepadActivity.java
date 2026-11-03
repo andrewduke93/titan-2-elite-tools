@@ -11,8 +11,9 @@ import android.widget.Toast;
 import rikka.shizuku.Shizuku;
 
 /**
- * Cycles the driver through Off -> Mouse -> Controller -> Off, one
- * launch per step, with a toast naming the new mode.
+ * Toggles the driver: Off -> Controller -> Off, one launch per
+ * step, with a toast naming the new mode. Mouse mode was removed
+ * 2026-11-03, so there is no third step in the cycle anymore.
  *
  * Same Shizuku-first pattern as before (register the binder and
  * permission-result listeners, stay alive until the result arrives,
@@ -62,16 +63,8 @@ public class GamepadActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         int current = GamepadAccessibilityService.getModePref(this);
-        // Bisect order: Off -> Controller -> Mouse -> Off, so
-        // Controller can be reached WITHOUT passing through Mouse
-        // first. If gamepad buttons work this way but not when
-        // cycling through Mouse, the mouse device lingering is
-        // the culprit; if they still fail, the mode system or
-        // blocking is.
         if (current == GamepadAccessibilityService.MODE_OFF) {
             nextMode = GamepadAccessibilityService.MODE_GAMEPAD;
-        } else if (current == GamepadAccessibilityService.MODE_GAMEPAD) {
-            nextMode = GamepadAccessibilityService.MODE_MOUSE;
         } else {
             nextMode = GamepadAccessibilityService.MODE_OFF;
         }
@@ -137,9 +130,7 @@ public class GamepadActivity extends Activity {
         // read in a second.
         if (sToast != null) sToast.cancel();
         String modeName;
-        if (nextMode == GamepadAccessibilityService.MODE_MOUSE) {
-            modeName = "Mouse mode.";
-        } else if (nextMode == GamepadAccessibilityService.MODE_GAMEPAD) {
+        if (nextMode == GamepadAccessibilityService.MODE_GAMEPAD) {
             modeName = "Controller mode.";
         } else {
             modeName = "Off.";

@@ -11,7 +11,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.KeyEvent;
 import android.view.accessibility.AccessibilityEvent;
-import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.Toast;
 
 import java.io.BufferedReader;
@@ -24,28 +23,17 @@ import java.util.concurrent.TimeUnit;
 import rikka.shizuku.Shizuku;
 
 /**
- * The driver itself, now with two profiles in one app.
+ * The driver itself: controller only. Mouse mode was removed
+ * 2026-11-03 at the user's request (unused) — the launcher now
+ * cycles Off -> Controller -> Off, and there is no mouse device,
+ * no mouse ticker, and no input-field pause logic left in here.
  *
- * Mouse mode is a new profile, not a new app: the same Accessibility
- * service, the same Shizuku permission, the same launcher icon. The
- * launcher cycles Off -> Mouse -> Controller -> Off. Each profile
- * creates its own UHID device and destroys it on switch, so Android
- * only ever sees one input device from this app at a time:
- *   Controller: the UHID gamepad (existing behaviour, unchanged).
- *   Mouse:      a UHID mouse — Android shows the system cursor while
- *               the device exists and hides it when it is destroyed.
- *   Off:        no device, no keys consumed, keyboard types normally.
- *
- * Key filtering works the same in both profiles: a mapped key is only
- * consumed when that profile's device is actually running. If the
- * device cannot be created, onKeyEvent() returns false and the
- * keyboard behaves exactly as normal.
- *
- * Controller mapping (unchanged): WASD D-pad, KLJI face, Q/E shoulders,
+ * Controller mapping: WASD D-pad, KLJI face, Q/E shoulders,
  * C/N L2/R2, T/Y L3/R3, Enter Select, Space Start, M Menu, O/P stick
  * toggles, X mode query.
- * Mouse mapping: WASD move, I scroll up, J scroll down, K left click,
- * L right click, X mode query.
+ *
+ * Key filtering: no key blocking anywhere — mapped keys send their
+ * gamepad report and also pass through, unmapped keys pass through.
  */
 public class GamepadAccessibilityService extends AccessibilityService {
     public static final String ACTION_TOGGLE = "com.titangamepad.TOGGLE";
@@ -57,7 +45,6 @@ public class GamepadAccessibilityService extends AccessibilityService {
 
     public static final int MODE_OFF = 0;
     public static final int MODE_GAMEPAD = 1;
-    public static final int MODE_MOUSE = 2;
 
     private static final String PREFS = "titangamepad";
     private static final String KEY_ENABLED = "enabled";
@@ -69,32 +56,14 @@ public class GamepadAccessibilityService extends AccessibilityService {
     private final GamepadMapping.State state = new GamepadMapping.State();
 
     private volatile int mode = MODE_OFF;
-    // Mouse-mode pause: true while an editable text field has focus.
-    // While true, mouse keys pass through and type normally instead
-    // of moving/clicking, and any held mouse movement/click is cleared.
-    private volatile boolean inputFieldFocused;
     private volatile boolean stickMode;
     private volatile boolean rstickMode;
     private volatile GamepadSink gamepadSink;
-    private volatile MouseSink mouseSink;
     private volatile String lastError;
     private volatile int startGen;
 
-    // Mouse profile state, guarded by mouseLock.
-    private final Object mouseLock = new Object();
-    private boolean mUp, mDown, mLeft, mRight, mScrollUp, mScrollDown;
-    private int mButtons;
-    private int mTick;
-    private volatile boolean mTickerRunning;
-    private Thread mTicker;
-
     private interface GamepadSink {
         void send(int buttons, int hat, int stickX, int stickY, int stickRX, int stickRY) throws Exception;
-        void close();
-    }
-
-    private interface MouseSink {
-        void send(int buttons, int dx, int dy, int wheel) throws Exception;
         void close();
     }
 
@@ -128,6 +97,13 @@ public class GamepadAccessibilityService extends AccessibilityService {
             savedMode = prefs.getBoolean(KEY_ENABLED, false) ? MODE_GAMEPAD : MODE_OFF;
             prefs.edit().putInt(KEY_MODE, savedMode).apply();
         }
+        // Any saved mode that is no longer valid (e.g. the removed
+        // mouse mode, value 2) falls back to Off rather than
+        // resurrecting a device that no longer exists.
+        if (savedMode != MODE_OFF && savedMode != MODE_GAMEPAD) {
+            savedMode = MODE_OFF;
+            prefs.edit().putInt(KEY_MODE, savedMode).apply();
+        }
         mode = savedMode;
         stickMode = false;
         rstickMode = false;
@@ -135,7 +111,6 @@ public class GamepadAccessibilityService extends AccessibilityService {
         if (mode != MODE_OFF) {
             startDriverAsync();
         }
-        if (mode == MODE_MOUSE) refreshInputFocus();
     }
 
     @Override
@@ -147,96 +122,8 @@ public class GamepadAccessibilityService extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        int type = event.getEventType();
-        if (type == AccessibilityEvent.TYPE_VIEW_FOCUSED
-                || type == AccessibilityEvent.TYPE_VIEW_CLICKED
-                || type == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
-                || type == AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED) {
-            boolean editable = false;
-            AccessibilityNodeInfo source = event.getSource();
-            if (source != null) {
-                try {
-                    editable = isEditableNode(source);
-                } finally {
-                    try { source.recycle(); } catch (Exception ignored) {}
-                }
-            } else {
-                CharSequence cls = event.getClassName();
-                editable = cls != null
-                        && (cls.toString().contains("EditText")
-                        || cls.toString().contains("TextInput")
-                        || cls.toString().contains("AutoComplete"));
-            }
-            // Text change/selection events only ever pause (they prove
-            // the user is typing in a field); focus/click events can
-            // also resume when the new focus is not editable.
-            boolean wasPaused = inputFieldFocused;
-            if (type == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
-                    || type == AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED) {
-                if (editable) inputFieldFocused = true;
-            } else {
-                inputFieldFocused = editable;
-            }
-            if (inputFieldFocused && !wasPaused && mode == MODE_MOUSE) {
-                clearMouseState();
-            }
-        } else if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            // New window (e.g. back from the launcher after enabling
-            // mouse mode): re-check the currently focused input node
-            // instead of blindly resuming, so a field that was already
-            // focused before mouse mode was enabled still pauses.
-            refreshInputFocus();
-        }
-    }
-
-    private static boolean isEditableNode(AccessibilityNodeInfo node) {
-        if (node.isEditable()) return true;
-        try {
-            if (node.getInputType() != 0) return true;
-        } catch (Exception ignored) {}
-        CharSequence cls = node.getClassName();
-        return cls != null
-                && (cls.toString().contains("EditText")
-                || cls.toString().contains("TextInput")
-                || cls.toString().contains("AutoComplete"));
-    }
-
-    private void clearMouseState() {
-        synchronized (mouseLock) {
-            mUp = mDown = mLeft = mRight = mScrollUp = mScrollDown = false;
-            mButtons = 0;
-            mTick = 0;
-        }
-        MouseSink ms = mouseSink;
-        if (ms != null) {
-            try { ms.send(0, 0, 0, 0); } catch (Exception ignored) {}
-        }
-    }
-
-    private void refreshInputFocus() {
-        try {
-            AccessibilityNodeInfo root = getRootInActiveWindow();
-            if (root == null) return;
-            try {
-                AccessibilityNodeInfo focus = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
-                if (focus == null) {
-                    inputFieldFocused = false;
-                    return;
-                }
-                try {
-                    boolean editable = isEditableNode(focus);
-                    boolean wasPaused = inputFieldFocused;
-                    inputFieldFocused = editable;
-                    if (editable && !wasPaused && mode == MODE_MOUSE) {
-                        clearMouseState();
-                    }
-                } finally {
-                    try { focus.recycle(); } catch (Exception ignored) {}
-                }
-            } finally {
-                try { root.recycle(); } catch (Exception ignored) {}
-            }
-        } catch (Exception ignored) {}
+        // Controller mode needs no accessibility events: keys are
+        // handled in onKeyEvent, and nothing pauses in text fields.
     }
 
     @Override
@@ -247,35 +134,28 @@ public class GamepadAccessibilityService extends AccessibilityService {
     @Override
     protected boolean onKeyEvent(KeyEvent event) {
         if (mode == MODE_OFF) return false;
-        // Mouse mode pauses in input fields: keys type normally and
-        // no mouse report is sent, until focus leaves the field.
-        // Gamepad mode is unchanged by this (see note in README).
-        if (mode == MODE_MOUSE && inputFieldFocused) return false;
         int keyCode = event.getKeyCode();
         // Escape hatch, always: Home, Back, and volume must pass
         // through, or there would be no way out of a mode without
-        // reaching the launcher icon. Everything else is blocked
-        // while a profile is on (see the mode handlers below).
+        // reaching the launcher icon.
         if (keyCode == KeyEvent.KEYCODE_HOME
                 || keyCode == KeyEvent.KEYCODE_BACK
                 || keyCode == KeyEvent.KEYCODE_VOLUME_UP
                 || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
             return false;
         }
-        // Mode query, both profiles: X is otherwise unmapped in mouse
-        // mode, and was already the query key in controller mode.
-        // BISECT-3: no blocking at all — query, then pass through.
+        // Mode query: X is otherwise unmapped in controller mode.
+        // No blocking at all — query, then pass through.
         if (keyCode == KeyEvent.KEYCODE_X) {
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
-                toastShort("Mode: " + (mode == MODE_MOUSE ? "Mouse" : "Controller") + ".");
+                toastShort("Mode: Controller.");
             }
             return false;
         }
-        if (mode == MODE_MOUSE) return onMouseKeyEvent(event);
         return onGamepadKeyEvent(event);
     }
 
-    // ---------------- Controller profile (unchanged behaviour) ----------------
+    // ---------------- Controller profile ----------------
 
     private boolean onGamepadKeyEvent(KeyEvent event) {
         GamepadSink s = gamepadSink;
@@ -285,23 +165,21 @@ public class GamepadAccessibilityService extends AccessibilityService {
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
                 setStickMode(!stickMode);
             }
-            return false;  // BISECT-3: do not block, pass through
+            return false;  // Do not block, pass through
         }
         if (keyCode == KeyEvent.KEYCODE_P) {
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
                 setRstickMode(!rstickMode);
             }
-            return false;  // BISECT-3: do not block, pass through
+            return false;  // Do not block, pass through
         }
-        // BISECT-2: blocking stripped, menufix behaviour: unmapped
-        // keys pass through and type, instead of being swallowed.
         if (!GamepadMapping.isMappedKey(keyCode)) return false;
         int action = event.getAction();
         if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_UP) {
             return false;
         }
         boolean pressed = (action == KeyEvent.ACTION_DOWN);
-        if (pressed && event.getRepeatCount() > 0) return false;  // BISECT-3
+        if (pressed && event.getRepeatCount() > 0) return false;
 
         synchronized (state) {
             if (rstickMode && GamepadMapping.State.isRightStickKey(keyCode)) {
@@ -321,162 +199,15 @@ public class GamepadAccessibilityService extends AccessibilityService {
                 return false;
             }
         }
-        // BISECT-3: send the gamepad report, but do NOT block the key —
+        // Send the gamepad report, but do NOT block the key —
         // pass it through, so DOWN/UP pairing cannot be broken by
-        // consuming. Unmapped keys send no gamepad input (blank for
-        // that key) and also pass through.
+        // consuming.
         return false;
-    }
-
-    // ---------------- Mouse profile ----------------
-
-    private static boolean isMouseKey(int keyCode) {
-        // Mouse mode, 2026-10-30 (corrected): WASD move, O = left
-        // click, P = right click. No scroll keys.
-        switch (keyCode) {
-            case KeyEvent.KEYCODE_W:
-            case KeyEvent.KEYCODE_A:
-            case KeyEvent.KEYCODE_S:
-            case KeyEvent.KEYCODE_D:
-            case KeyEvent.KEYCODE_O:
-            case KeyEvent.KEYCODE_P:
-                return true;
-            default:
-                return false;
-        }
-    }
-
-    private boolean onMouseKeyEvent(KeyEvent event) {
-        MouseSink s = mouseSink;
-        if (s == null) return false;
-        int keyCode = event.getKeyCode();
-        // BISECT-2: blocking stripped, menufix behaviour.
-        if (!isMouseKey(keyCode)) return false;
-        int action = event.getAction();
-        if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_UP) {
-            return false;
-        }
-        boolean pressed = (action == KeyEvent.ACTION_DOWN);
-        if (pressed && event.getRepeatCount() > 0) return false;  // BISECT-3, ticker handles holds
-        synchronized (mouseLock) {
-            // Unstick rule, same as the gamepad: a fresh down for a key
-            // that is already down means the previous up was lost, so
-            // clear it instead of re-setting it.
-            switch (keyCode) {
-                case KeyEvent.KEYCODE_W:
-                    if (pressed && mUp) mUp = false; else { mUp = pressed; if (pressed) mDown = false; }
-                    break;
-                case KeyEvent.KEYCODE_S:
-                    if (pressed && mDown) mDown = false; else { mDown = pressed; if (pressed) mUp = false; }
-                    break;
-                case KeyEvent.KEYCODE_A:
-                    if (pressed && mLeft) mLeft = false; else { mLeft = pressed; if (pressed) mRight = false; }
-                    break;
-                case KeyEvent.KEYCODE_D:
-                    if (pressed && mRight) mRight = false; else { mRight = pressed; if (pressed) mLeft = false; }
-                    break;
-                case KeyEvent.KEYCODE_O:
-                    // Left click, bit 0.
-                    if (pressed && (mButtons & 1) != 0) mButtons &= ~1;
-                    else if (pressed) mButtons |= 1; else mButtons &= ~1;
-                    break;
-                case KeyEvent.KEYCODE_P:
-                    // Right click, bit 1.
-                    if (pressed && (mButtons & 2) != 0) mButtons &= ~2;
-                    else if (pressed) mButtons |= 2; else mButtons &= ~2;
-                    break;
-                default: break;
-            }
-            // Clicks go out immediately; movement and scroll are
-            // ticker-driven so a hold keeps moving/scrolling.
-            if (keyCode == KeyEvent.KEYCODE_O || keyCode == KeyEvent.KEYCODE_P) {
-                try {
-                    s.send(mButtons, 0, 0, 0);
-                } catch (Exception e) {
-                    main.post(new Runnable() {
-                        @Override public void run() { stopDriver(); }
-                    });
-                    toast("Titan Mouse stopped: " + e.getMessage());
-                    return false;
-                }
-            }
-        }
-        // BISECT-3: mouse report sent (clicks immediate, movement via
-        // ticker), key itself passes through, not blocked.
-        return false;
-    }
-
-    private void startMouseTicker() {
-        if (mTickerRunning) return;
-        mTickerRunning = true;
-        mTicker = new Thread(new Runnable() {
-            @Override public void run() {
-                while (mTickerRunning) {
-                    try {
-                        MouseSink s = mouseSink;
-                        if (mode == MODE_MOUSE && s != null) {
-                            boolean moving, scrolling;
-                            int buttons, dx = 0, dy = 0, wheel = 0;
-                            synchronized (mouseLock) {
-                                moving = mUp || mDown || mLeft || mRight;
-                                scrolling = mScrollUp || mScrollDown;
-                                buttons = mButtons;
-                                if (moving || scrolling) {
-                                    mTick++;
-                                    // Accelerating step: starts slow for
-                                    // precise nudges, caps at 24/tick.
-                                    int step = Math.min(4 + mTick / 8, 24);
-                                    if (mLeft && !mRight) dx = -step;
-                                    else if (mRight && !mLeft) dx = step;
-                                    if (mUp && !mDown) dy = -step;
-                                    else if (mDown && !mUp) dy = step;
-                                    // Scroll every 5th tick (100 ms).
-                                    if (scrolling && mTick % 5 == 0) {
-                                        wheel = mScrollUp && !mScrollDown ? 3 : -3;
-                                    }
-                                } else {
-                                    mTick = 0;
-                                }
-                            }
-                            if (moving || scrolling) {
-                                try {
-                                    s.send(buttons, dx, dy, wheel);
-                                } catch (Exception e) {
-                                    main.post(new Runnable() {
-                                        @Override public void run() { stopDriver(); }
-                                    });
-                                    toast("Titan Mouse stopped: " + e.getMessage());
-                                    return;
-                                }
-                            }
-                        }
-                        Thread.sleep(20);
-                    } catch (InterruptedException ignored) {
-                        return;
-                    } catch (Exception ignored) {
-                    }
-                }
-            }
-        }, "titanmouse-ticker");
-        mTicker.setDaemon(true);
-        mTicker.start();
-    }
-
-    private void stopMouseTicker() {
-        mTickerRunning = false;
-        if (mTicker != null) mTicker.interrupt();
-        mTicker = null;
-        synchronized (mouseLock) {
-            mUp = mDown = mLeft = mRight = mScrollUp = mScrollDown = false;
-            mButtons = 0;
-            mTick = 0;
-        }
     }
 
     // ---------------- Mode switching / device creation ----------------
 
     private synchronized void setMode(int newMode) {
-        if (newMode == mode && newMode != MODE_OFF) return;
         if (newMode == mode) return;
         mode = newMode;
         startGen++;
@@ -484,16 +215,12 @@ public class GamepadAccessibilityService extends AccessibilityService {
                 .putInt(KEY_MODE, newMode)
                 .putBoolean(KEY_ENABLED, newMode != MODE_OFF).apply();
         stopDriver();
-        if (newMode == MODE_OFF) {
-            // No toast here: the launcher activity already announces
-            // Off while foreground, same as the other modes.
-        } else {
+        if (newMode != MODE_OFF) {
             stickMode = false;
             rstickMode = false;
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                     .putBoolean(KEY_STICK, false).putBoolean(KEY_RSTICK, false).apply();
             startDriverAsync();
-            if (newMode == MODE_MOUSE) refreshInputFocus();
         }
     }
 
@@ -504,57 +231,32 @@ public class GamepadAccessibilityService extends AccessibilityService {
             @Override public void run() {
                 String error = null;
                 GamepadSink createdGamepad = null;
-                MouseSink createdMouse = null;
                 String createdVia = null;
-                if (wantedMode == MODE_MOUSE) {
+                try {
+                    createdGamepad = startShizukuGamepadHelper();
+                    createdVia = "Shizuku helper";
+                } catch (Exception e) {
+                    error = "Shizuku helper: " + e.getMessage();
+                }
+                if (createdGamepad == null) {
                     try {
-                        createdMouse = startShizukuMouseHelper();
-                        createdVia = "Shizuku helper";
+                        final UhidDevice dev = UhidDevice.open();
+                        dev.sendReport(0, GamepadMapping.HAT_NEUTRAL);
+                        createdGamepad = new GamepadSink() {
+                            @Override public void send(int b, int h, int x, int y, int rx, int ry) throws Exception { dev.sendReport(b, h, x, y, rx, ry); }
+                            @Override public void close() { dev.close(); }
+                        };
+                        createdVia = "direct /dev/uhid";
+                        error = null;
                     } catch (Exception e) {
-                        error = "Shizuku helper: " + e.getMessage();
-                    }
-                    if (createdMouse == null) {
-                        try {
-                            final UhidMouseDevice dev = UhidMouseDevice.open();
-                            dev.sendReport(0, 0, 0, 0);
-                            createdMouse = new MouseSink() {
-                                @Override public void send(int b, int x, int y, int w) throws Exception { dev.sendReport(b, x, y, w); }
-                                @Override public void close() { dev.close(); }
-                            };
-                            createdVia = "direct /dev/uhid";
-                            error = null;
-                        } catch (Exception e) {
-                            error = (error == null ? "" : error + " | ") + "direct /dev/uhid: " + e.getMessage();
-                        }
-                    }
-                } else {
-                    try {
-                        createdGamepad = startShizukuGamepadHelper();
-                        createdVia = "Shizuku helper";
-                    } catch (Exception e) {
-                        error = "Shizuku helper: " + e.getMessage();
-                    }
-                    if (createdGamepad == null) {
-                        try {
-                            final UhidDevice dev = UhidDevice.open();
-                            dev.sendReport(0, GamepadMapping.HAT_NEUTRAL);
-                            createdGamepad = new GamepadSink() {
-                                @Override public void send(int b, int h, int x, int y, int rx, int ry) throws Exception { dev.sendReport(b, h, x, y, rx, ry); }
-                                @Override public void close() { dev.close(); }
-                            };
-                            createdVia = "direct /dev/uhid";
-                            error = null;
-                        } catch (Exception e) {
-                            error = (error == null ? "" : error + " | ") + "direct /dev/uhid: " + e.getMessage();
-                        }
+                        error = (error == null ? "" : error + " | ") + "direct /dev/uhid: " + e.getMessage();
                     }
                 }
                 if (gen != startGen || mode != wantedMode) {
                     if (createdGamepad != null) createdGamepad.close();
-                    if (createdMouse != null) createdMouse.close();
                     return;
                 }
-                if (createdGamepad == null && createdMouse == null) {
+                if (createdGamepad == null) {
                     lastError = error;
                     mode = MODE_OFF;
                     getSharedPreferences(PREFS, MODE_PRIVATE).edit()
@@ -563,20 +265,9 @@ public class GamepadAccessibilityService extends AccessibilityService {
                             + " Keys were NOT consumed; keyboard works normally.");
                     return;
                 }
-                if (wantedMode == MODE_MOUSE) {
-                    mouseSink = createdMouse;
-                    startMouseTicker();
-                    // No success toast here: the launcher activity
-                    // already announced the mode while foreground (see
-                    // GamepadActivity). A toast posted from this
-                    // background thread after device creation was
-                    // being suppressed, which is why only the OFF
-                    // toast ever showed.
-                } else {
-                    synchronized (state) { state.clear(); }
-                    gamepadSink = createdGamepad;
-                    try { createdGamepad.send(0, GamepadMapping.HAT_NEUTRAL, 0, 0, 0, 0); } catch (Exception ignored) {}
-                }
+                synchronized (state) { state.clear(); }
+                gamepadSink = createdGamepad;
+                try { createdGamepad.send(0, GamepadMapping.HAT_NEUTRAL, 0, 0, 0, 0); } catch (Exception ignored) {}
             }
         }, "titangamepad-start").start();
     }
@@ -587,21 +278,6 @@ public class GamepadAccessibilityService extends AccessibilityService {
         return new GamepadSink() {
             @Override public synchronized void send(int b, int h, int x, int y, int rx, int ry) throws Exception {
                 out.write(("STATE " + b + " " + h + " " + x + " " + y + " " + rx + " " + ry + "\n").getBytes("UTF-8"));
-                out.flush();
-            }
-            @Override public void close() {
-                try { out.write("QUIT\n".getBytes("UTF-8")); out.flush(); } catch (Exception ignored) {}
-                try { p.destroy(); } catch (Exception ignored) {}
-            }
-        };
-    }
-
-    private MouseSink startShizukuMouseHelper() throws Exception {
-        final Process p = startShizukuProcess("com.titangamepad.UhidMouseHelper");
-        final OutputStream out = p.getOutputStream();
-        return new MouseSink() {
-            @Override public synchronized void send(int b, int x, int y, int w) throws Exception {
-                out.write(("STATE " + b + " " + x + " " + y + " " + w + "\n").getBytes("UTF-8"));
                 out.flush();
             }
             @Override public void close() {
@@ -655,18 +331,11 @@ public class GamepadAccessibilityService extends AccessibilityService {
     }
 
     private synchronized void stopDriver() {
-        stopMouseTicker();
         GamepadSink g = gamepadSink;
         gamepadSink = null;
         if (g != null) {
             try { g.send(0, GamepadMapping.HAT_NEUTRAL, 0, 0, 0, 0); } catch (Exception ignored) {}
             g.close();
-        }
-        MouseSink m = mouseSink;
-        mouseSink = null;
-        if (m != null) {
-            try { m.send(0, 0, 0, 0); } catch (Exception ignored) {}
-            m.close();
         }
         synchronized (state) { state.clear(); }
     }
@@ -769,6 +438,9 @@ public class GamepadAccessibilityService extends AccessibilityService {
         int savedMode = prefs.getInt(KEY_MODE, -1);
         if (savedMode == -1) {
             return prefs.getBoolean(KEY_ENABLED, false) ? MODE_GAMEPAD : MODE_OFF;
+        }
+        if (savedMode != MODE_OFF && savedMode != MODE_GAMEPAD) {
+            return MODE_OFF;
         }
         return savedMode;
     }
